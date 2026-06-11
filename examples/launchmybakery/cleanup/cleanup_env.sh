@@ -38,6 +38,9 @@ echo "Dataset:   $DATASET_NAME"
 echo "Bucket:    $BUCKET_NAME"
 echo "Local Env: $ENV_FILE"
 echo "API Keys:  Keys named 'bakery-demo-key-*'"
+echo "Cloud Run: Service 'launchmybakery' in us-west1"
+echo "Secrets:   Secret named 'MAPS_API_KEY'"
+echo "IAM SA:    Service Account 'bakery-app-runner'"
 echo "----------------------------------------------------------------"
 echo "WARNING: This will permanently delete the dataset, bucket, and API keys."
 read -p "Are you sure you want to proceed? (y/n) " -n 1 -r
@@ -88,9 +91,42 @@ else
 fi
 
 # ------------------------------------------
-# Phase 3: Local Config
+# Phase 3: Cloud Run & IAM (Optional)
 # ------------------------------------------
-echo "[4/5] Removing local configuration..."
+echo "[4/7] Cleaning up Cloud Run and IAM resources..."
+
+# 1. Delete Cloud Run service
+if gcloud run services describe launchmybakery --region=us-west1 --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo "      Deleting Cloud Run service: launchmybakery..."
+    gcloud run services delete launchmybakery --region=us-west1 --project="$PROJECT_ID" --quiet
+    echo "      Cloud Run service deleted."
+else
+    echo "      Cloud Run service 'launchmybakery' not found in us-west1. Skipping."
+fi
+
+# 2. Delete Secret Manager secret
+if gcloud secrets describe MAPS_API_KEY --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo "      Deleting secret: MAPS_API_KEY..."
+    gcloud secrets delete MAPS_API_KEY --project="$PROJECT_ID" --quiet
+    echo "      Secret deleted."
+else
+    echo "      Secret 'MAPS_API_KEY' not found. Skipping."
+fi
+
+# 3. Delete Service Account
+SA_EMAIL="bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com"
+if gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo "      Deleting Service Account: $SA_EMAIL..."
+    gcloud iam service-accounts delete "$SA_EMAIL" --project="$PROJECT_ID" --quiet
+    echo "      Service Account deleted."
+else
+    echo "      Service Account '$SA_EMAIL' not found. Skipping."
+fi
+
+# ------------------------------------------
+# Phase 4: Local Config
+# ------------------------------------------
+echo "[5/7] Removing local configuration..."
 if [ -f "$ENV_FILE" ]; then
     rm "$ENV_FILE"
     echo "      Deleted $ENV_FILE"
@@ -99,9 +135,9 @@ else
 fi
 
 # ------------------------------------------
-# Phase 4: Disable APIs (Optional)
+# Phase 5: Disable APIs (Optional)
 # ------------------------------------------
-echo "[5/5] Checking Enabled APIs..."
+echo "[6/7] Checking Enabled APIs..."
 echo "----------------------------------------------------------------"
 echo "The setup enabled: mapstools, apikeys, bigquery."
 echo "NOTE: Only disable these if no other apps in this project use them."

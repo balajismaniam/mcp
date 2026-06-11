@@ -1,3 +1,6 @@
 pandas
 numpy
 google-cloud-bigquery
+google-adk==1.28.0
+google-genai==1.75.0
+streamlit==1.58.0
