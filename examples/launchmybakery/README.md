@@ -98,16 +98,111 @@ chmod +x ./setup/setup_bigquery.sh
 ./setup/setup_bigquery.sh
 ```
 
-### 5. Install ADK and Run Agent
+### 5. Deploy to Google Cloud Run (Default)
 
-Create a virtual environment, install the ADK, and run the agent.
+The recommended deployment method is to host the chatbot application on Google Cloud Run. This runs the Streamlit UI as a secure serverless service. Cloud Run will automatically containerize the application from source using Google Cloud Buildpacks.
+
+#### Step 1: Enable Required APIs
+Before deploying, ensure that the Cloud Run, Cloud Build, Secret Manager, and Artifact Registry APIs are enabled:
+
+```bash
+gcloud services enable run.googleapis.com \
+    cloudbuild.googleapis.com \
+    secretmanager.googleapis.com \
+    artifactregistry.googleapis.com
+```
+
+#### Step 2: Store the Maps API Key in Secret Manager
+For security, the Google Maps API Key is stored in Secret Manager and mounted as an environment variable in Cloud Run:
+
+```bash
+# Create the secret container
+gcloud secrets create MAPS_API_KEY --replication-policy="automatic"
+
+# Add your API key value to the secret (replace YOUR_KEY with your actual Maps key, which was generated in Step 3 and can be found in 'adk_agent/mcp_bakery_app/.env')
+echo -n "YOUR_KEY" | gcloud secrets versions add MAPS_API_KEY --data-file=-
+```
+
+#### Step 3: Set up IAM Permissions
+The application needs permission to query BigQuery and access the Secret Manager secret.
+
+Initialize your Project ID variable:
+```bash
+PROJECT_ID=$(gcloud config get-value project)
+```
+
+1. Create a user-managed Service Account (`bakery-app-runner`):
+   ```bash
+   gcloud iam service-accounts create bakery-app-runner \
+       --display-name="Bakery App Runner Service Account" \
+       --project=$PROJECT_ID
+   ```
+
+2. Grant BigQuery, Vertex AI, and MCP roles to the Service Account:
+   ```bash
+   # Grant BigQuery Admin role
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+       --role="roles/bigquery.admin"
+
+   # Grant Vertex AI User role (required for model predictions)
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+       --role="roles/aiplatform.user"
+
+   # Grant MCP Tool User role (required to call remote MCP tools)
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+       --role="roles/mcp.toolUser"
+   ```
+
+3. Grant Secret Manager access to the Service Account:
+   ```bash
+   gcloud secrets add-iam-policy-binding MAPS_API_KEY \
+       --project=$PROJECT_ID \
+       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+       --role="roles/secretmanager.secretAccessor"
+   ```
+
+> [!IMPORTANT]
+> IAM permission updates can take 1–2 minutes to propagate across Google Cloud. If your deployment fails with a `Permission denied on secret` error, please wait a minute and rerun the deploy command.
+
+#### Step 4: Deploy the Application
+Deploy the service directly from source, mapping execution flags, service account, and secrets:
+
+```bash
+gcloud run deploy launchmybakery \
+    --source . \
+    --region="us-west1" \
+    --service-account="bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
+    --command="/cnb/lifecycle/launcher" \
+    --args="sh,-c,python3 -m streamlit run streamlit_app.py --server.port=\$PORT --server.address=0.0.0.0" \
+    --allow-unauthenticated \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$(gcloud config get-value project),GOOGLE_GENAI_USE_VERTEXAI=1" \
+    --set-secrets="MAPS_API_KEY=MAPS_API_KEY:latest"
+```
+
+Cloud Run will build the code and output a secure HTTPS endpoint (URL) once the deployment completes.
+
+### 6. Chat with the Agent
+
+Open the Cloud Run service URL provided in your browser. You can now chat with the agent and ask it questions about the bakery data.
+
+**Sample Questions to Try:**
+
+*   "I’m looking to open my fourth bakery location in Los Angeles. I need a neighborhood with early activity. Find the zip code with the highest 'morning' foot traffic score."
+*   "Can you search for 'Bakeries' in that zip code to see if it's saturated? If there are too many, check for 'Specialty Coffee' shops, so I can position myself near them to capture foot traffic."
+*    "Okay and I want to position this as a premium brand. What is the maximum price being charged for a 'Sourdough Loaf' in the LA Metro area?"
+*    "Now I want a revenue projection for December 2025. Look at my sales history and take data from my best performing store for the 'Sourdough Loaf'. Run a forecast for December 2025 to estimate the quantity I'll sell. Then, calculate the projected total revenue using just under the premium price we found (let's use $18)"
+*    "That'll cover my rent. Lastly, let's verify logistics. Find the closest "Restaurant Depot" to the proposed area and make sure that drive time is under 30 minutes for daily restocking."
+
+### 7. Run Locally via ADK Web Interface (Alternative, Optional)
+
+If you prefer to run the agent locally inside Google Cloud Shell using the standard ADK web interface:
 
 ```bash
 # Create virtual environment
 python3 -m venv .venv
-
-# If the above fails, you may need to install python3-venv:
-# apt update && apt install python3-venv
 
 # Activate virtual environment
 source .venv/bin/activate
@@ -122,23 +217,11 @@ cd adk_agent/
 adk web --allow_origins 'regex:https://.*\.cloudshell\.dev'
 ```
 
-### 6. Chat with the Agent
+Open the link provided by `adk web` in your browser to start chatting with the agent. To abort the session, press `Ctrl+C`.
 
-Open the link provided by `adk web` in your browser. You can now chat with the agent and ask it questions about the bakery data.
+### 8. Run Locally via Streamlit UI (Alternative, Optional)
 
-**Sample Questions:**
-
-*   "I’m looking to open my fourth bakery location in Los Angeles. I need a neighborhood with early activity. Find the zip code with the highest 'morning' foot traffic score."
-*   "Can you search for 'Bakeries' in that zip code to see if it's saturated? If there are too many, check for 'Specialty Coffee' shops, so I can position myself near them to capture foot traffic."
-*    "Okay and I want to position this as a premium brand. What is the maximum price being charged for a 'Sourdough Loaf' in the LA Metro area?"
-*    "Now I want a revenue projection for December 2025. Look at my sales history and take data from my best performing store for the 'Sourdough Loaf'. Run a forecast for December 2025 to estimate the quantity I'll sell. Then, calculate the projected total revenue using just under the premium price we found (let's use $18)"
-*    "That'll cover my rent. Lastly, let's verify logistics. Find the closest "Restaurant Depot" to the proposed area and make sure that drive time is under 30 minutes for daily restocking."
-
-To abort the ADK session in Cloud Shell, press `Ctrl+C`.
-
-### 7. Run the Streamlit Chatbot Locally (Optional)
-
-As an alternative to the ADK web interface, you can run a premium Streamlit chatbot UI locally:
+As another local alternative, you can run the premium Streamlit chatbot UI locally:
 
 ```bash
 # Ensure virtual environment is active
@@ -152,76 +235,6 @@ streamlit run streamlit_app.py
 ```
 
 Open the local URL displayed in the terminal (typically `http://localhost:8501`) to start chatting with the agent.
-
-### 8. Deploy to Google Cloud Run (Optional)
-
-You can deploy the chatbot application directly to Google Cloud Run from source. Cloud Run will automatically containerize the application using Google Cloud Buildpacks, with no `Dockerfile` or `Procfile` required.
-
-#### Step 0: Enable Required APIs
-Before deploying, ensure that the Cloud Run, Cloud Build, Secret Manager, and Artifact Registry APIs are enabled in your Google Cloud Project:
-
-```bash
-gcloud services enable run.googleapis.com \
-    cloudbuild.googleapis.com \
-    secretmanager.googleapis.com \
-    artifactregistry.googleapis.com
-```
-
-#### Step 1: Create and Store the Maps API Key in Secret Manager
-For security, the Google Maps API Key is stored in Secret Manager and mounted as an environment variable in Cloud Run:
-
-```bash
-# Create the secret container
-gcloud secrets create MAPS_API_KEY --replication-policy="automatic"
-
-# Add your API key value to the secret (replace YOUR_KEY with your actual Maps key, which was generated in Step 3 and can be found in the 'adk_agent/mcp_bakery_app/.env' file)
-echo -n "YOUR_KEY" | gcloud secrets versions add MAPS_API_KEY --data-file=-
-```
-
-#### Step 2: Set up IAM Permissions
-The application needs permission to query BigQuery and access the Secret Manager secret. 
-
-1. Identify or create a user-managed Service Account (e.g., `bakery-app-runner`):
-   ```bash
-   gcloud iam service-accounts create bakery-app-runner \
-       --display-name="Bakery App Runner Service Account" \
-       --project=$(gcloud config get-value project)
-   ```
-
-2. Grant BigQuery roles to the Service Account:
-   ```bash
-   gcloud projects add-iam-policy-binding $(gcloud config get-value project) \
-       --member="serviceAccount:bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
-       --role="roles/bigquery.admin"
-   ```
-
-3. Grant Secret Manager access to the Service Account:
-   ```bash
-   gcloud secrets add-iam-policy-binding MAPS_API_KEY \
-       --project=$(gcloud config get-value project) \
-       --member="serviceAccount:bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
-       --role="roles/secretmanager.secretAccessor"
-   ```
-
-> [!IMPORTANT]
-> IAM permission updates can take 1–2 minutes to propagate across Google Cloud. If your deployment fails with a `Permission denied on secret` error, please wait a minute and rerun the deploy command.
-
-#### Step 3: Deploy the Application
-Deploy the service directly from source, mapping execution flags and secrets:
-
-```bash
-gcloud run deploy launchmybakery \
-    --source . \
-    --region="us-west1" \
-    --service-account="bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
-    --command="sh" \
-    --args="-c,/workspace/.venv/bin/streamlit run streamlit_app.py --server.port=\$PORT --server.address=0.0.0.0" \
-    --allow-unauthenticated \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$(gcloud config get-value project),GOOGLE_GENAI_USE_VERTEXAI=1" \
-    --set-secrets="MAPS_API_KEY=MAPS_API_KEY:latest"
-```
-
-Cloud Run will build the code and provide a secure HTTPS endpoint once the deployment completes.
 
 ### 9. Cleanup
 

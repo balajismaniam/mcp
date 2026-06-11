@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.gitignore
+
+# Local virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local secrets
+adk_agent/mcp_bakery_app/.env
