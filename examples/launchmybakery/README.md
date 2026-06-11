@@ -184,25 +184,27 @@ The application needs permission to query BigQuery and access the Secret Manager
 1. Identify or create a user-managed Service Account (e.g., `bakery-app-runner`):
    ```bash
    gcloud iam service-accounts create bakery-app-runner \
-       --display-name="Bakery App Runner Service Account"
+       --display-name="Bakery App Runner Service Account" \
+       --project=$(gcloud config get-value project)
    ```
 
 2. Grant BigQuery roles to the Service Account:
    ```bash
-   PROJECT_ID=$(gcloud config get-value project)
-
-   # Grant BigQuery Admin/User role
-   gcloud projects add-iam-policy-binding $PROJECT_ID \
-       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+   gcloud projects add-iam-policy-binding $(gcloud config get-value project) \
+       --member="serviceAccount:bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
        --role="roles/bigquery.admin"
    ```
 
 3. Grant Secret Manager access to the Service Account:
    ```bash
    gcloud secrets add-iam-policy-binding MAPS_API_KEY \
-       --member="serviceAccount:bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+       --project=$(gcloud config get-value project) \
+       --member="serviceAccount:bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
        --role="roles/secretmanager.secretAccessor"
    ```
+
+> [!IMPORTANT]
+> IAM permission updates can take 1–2 minutes to propagate across Google Cloud. If your deployment fails with a `Permission denied on secret` error, please wait a minute and rerun the deploy command.
 
 #### Step 3: Deploy the Application
 Deploy the service directly from source, mapping execution flags and secrets:
@@ -211,11 +213,11 @@ Deploy the service directly from source, mapping execution flags and secrets:
 gcloud run deploy launchmybakery \
     --source . \
     --region="us-west1" \
-    --service-account="bakery-app-runner@$PROJECT_ID.iam.gserviceaccount.com" \
+    --service-account="bakery-app-runner@$(gcloud config get-value project).iam.gserviceaccount.com" \
     --command="sh" \
-    --args="-c,streamlit run streamlit_app.py --server.port=\$PORT --server.address=0.0.0.0" \
+    --args="-c,/workspace/.venv/bin/streamlit run streamlit_app.py --server.port=\$PORT --server.address=0.0.0.0" \
     --allow-unauthenticated \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_GENAI_USE_VERTEXAI=1" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$(gcloud config get-value project),GOOGLE_GENAI_USE_VERTEXAI=1" \
     --set-secrets="MAPS_API_KEY=MAPS_API_KEY:latest"
 ```
 
